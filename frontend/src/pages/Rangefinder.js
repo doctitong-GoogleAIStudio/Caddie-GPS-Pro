@@ -8,7 +8,8 @@ import { haversineMeters, bearingDeg, fmtDist, unitLabel, movedMoreThan } from "
 import { computePlaysLike } from "../lib/playsLike";
 import { recommendClub } from "../lib/clubRec";
 import { api, cachedGet, getActiveRound, setActiveRound } from "../lib/api";
-import { House, CaretLeft, CaretRight, Crosshair, GpsFix, Stack, CaretUp, CaretDown, Wind } from "@phosphor-icons/react";
+import { House, CaretLeft, CaretRight, Crosshair, GpsFix, Stack, CaretUp, CaretDown, Wind, PersonSimpleWalk, X } from "@phosphor-icons/react";
+import { VoiceCaddie } from "../components/VoiceCaddie";
 
 const DEFAULT_CENTER = { lat: 7.052, lng: 125.517 };
 const WIND_DIRS = [["head", "HEADWIND"], ["tail", "TAILWIND"], ["left", "LEFT CROSS"], ["right", "RIGHT CROSS"], ["none", "NO WIND"]];
@@ -36,6 +37,9 @@ export default function Rangefinder() {
   const [shot, setShot] = useState(null);
   const [shotResult, setShotResult] = useState(null);
   const [showClubPick, setShowClubPick] = useState(false);
+  const [walkAnchor, setWalkAnchor] = useState(null);
+  const [holeSuggestion, setHoleSuggestion] = useState(null);
+  const dismissedHoleRef = useRef(null);
   const elevReqRef = useRef({ ball: null, target: null });
   const devMode = localStorage.getItem("sg_dev") === "1";
 
@@ -134,8 +138,12 @@ export default function Rangefinder() {
 
   const changeHole = (delta) => {
     if (!course) return;
-    const next = Math.max(0, Math.min(course.holes.length - 1, holeIdx + delta));
+    goHole(Math.max(0, Math.min(course.holes.length - 1, holeIdx + delta)));
+  };
+
+  const goHole = (next) => {
     setHoleIdx(next);
+    setHoleSuggestion(null);
     if (activeRound) {
       const upd = { ...activeRound, currentHole: next + 1 };
       setActiveRound(upd);
@@ -143,9 +151,43 @@ export default function Rangefinder() {
     }
   };
 
+  // Nearest hole suggestion (never auto-switches)
+  useEffect(() => {
+    if (!gpsPos || !course) { setHoleSuggestion(null); return; }
+    let best = null;
+    course.holes.forEach((h, i) => {
+      [h.tee, h.greenCenter].filter(Boolean).forEach((p) => {
+        const d = haversineMeters(gpsPos, p);
+        if (!best || d < best.d) best = { i, d };
+      });
+    });
+    if (best && best.i !== holeIdx && best.d < 120 && dismissedHoleRef.current !== best.i) setHoleSuggestion(best);
+    else setHoleSuggestion(null);
+  }, [gpsPos, course, holeIdx]);
+
+  const walkDistM = useMemo(() => (walkAnchor && gpsPos ? haversineMeters(walkAnchor, gpsPos) : null), [walkAnchor, gpsPos]);
+
+  const voiceAnswer = (q) => {
+    const ql = (q || "").toLowerCase();
+    const u = unit === "yd" ? "yards" : "meters";
+    if (ql.includes("club")) {
+      return rec ? `Your ${rec.club.name} averages ${Math.round(rec.club.carry)} yards.` : "No club recommendation available.";
+    }
+    if (ql.includes("front") && fcb?.front != null) return `${fmtDist(fcb.front, unit)} ${u} to the front of the green.`;
+    if (ql.includes("back") && fcb?.back != null) return `${fmtDist(fcb.back, unit)} ${u} to the back of the green.`;
+    if ((ql.includes("green") || ql.includes("center")) && fcb?.center != null) {
+      const plays = pl && !settings.tournamentMode && Math.round(pl.playsLikeMeters) !== Math.round(distM) ? `, playing approximately ${fmtDist(pl.playsLikeMeters, unit)}` : "";
+      return `${fmtDist(fcb.center, unit)} ${u} to center${plays}.`;
+    }
+    if (distM == null) return "No target set. Tap the map to place a target.";
+    const plays = pl && !settings.tournamentMode && Math.round(pl.playsLikeMeters) !== Math.round(distM) ? `, playing approximately ${fmtDist(pl.playsLikeMeters, unit)}` : "";
+    return `${fmtDist(distM, unit)} ${u} to the target${plays}.`;
+  };
+
   const startShot = (club) => {
     if (!ball) { toast.error("No ball position yet"); return; }
     setShot({ start: ball, club, targetDist: distM, playsLike: pl?.playsLikeMeters });
+    setWalkAnchor(ballSource === "gps" && gpsPos ? gpsPos : ball);
     setShowClubPick(false);
     toast.success(`Shot started with ${club}. Walk to your ball, then tap BALL FOUND.`);
   };
@@ -167,6 +209,7 @@ export default function Rangefinder() {
         fairway: s.fairway, direction: s.direction,
       });
       toast.success(`Shot recorded: ${s.club} · ${fmtDist(s.distance, unit)} ${unitLabel(unit)}`);
+      setWalkAnchor(s.end);
     } catch { toast.error("Could not save shot (offline?)"); }
     setShotResult(null);
   };
@@ -215,6 +258,19 @@ export default function Rangefinder() {
         </div>
       </div>
 
+      {/* Nearest hole suggestion */}
+      {holeSuggestion && (
+        <div className="absolute top-[64px] left-1/2 -translate-x-1/2 z-[1090] bg-[#0F0F10] text-white rounded-2xl shadow-xl px-3 py-2 flex items-center gap-2 border border-[#D4AF37]/60" data-testid="hole-suggestion-banner">
+          <p className="text-[11px] font-bold whitespace-nowrap">Near Hole {course.holes[holeSuggestion.i].holeNumber}?</p>
+          <button data-testid="switch-hole-btn" onClick={() => goHole(holeSuggestion.i)}
+            className="h-9 px-3 rounded-lg bg-[#D4AF37] text-[#0F0F10] text-[10px] font-extrabold whitespace-nowrap">
+            SWITCH TO HOLE {course.holes[holeSuggestion.i].holeNumber}
+          </button>
+          <button data-testid="dismiss-hole-suggestion-btn" onClick={() => { dismissedHoleRef.current = holeSuggestion.i; setHoleSuggestion(null); }}
+            className="h-9 w-9 rounded-lg bg-white/10 flex items-center justify-center"><X size={14} /></button>
+        </div>
+      )}
+
       {/* Big distance card */}
       <div className="absolute top-[64px] left-3 z-[1050] bg-white rounded-2xl shadow-xl border border-zinc-300 px-4 py-2.5 min-w-[128px]" data-testid="distance-card">
         <div className="flex items-center justify-between gap-2">
@@ -236,6 +292,12 @@ export default function Rangefinder() {
             {elev.diff >= 0 ? "+" : ""}{elev.diff} m {elev.diff >= 0 ? "UPHILL" : "DOWNHILL"}
           </p>
         )}
+        {walkDistM != null && (
+          <div className="mt-1.5 pt-1.5 border-t border-zinc-200 flex items-center gap-1.5" data-testid="walkoff-meter">
+            <PersonSimpleWalk size={14} className="text-[#14532D]" />
+            <p className="text-[10px] font-extrabold text-zinc-600">WALKED <span className="font-num text-sm text-[#14532D]">{fmtDist(walkDistM, unit)}</span> {unitLabel(unit)}</p>
+          </div>
+        )}
       </div>
 
       {/* Right controls */}
@@ -244,6 +306,7 @@ export default function Rangefinder() {
           className="h-11 w-11 rounded-xl bg-white shadow-lg border border-zinc-300 flex items-center justify-center"><Stack size={20} /></button>
         <button data-testid="recenter-btn" onClick={() => setRecenterTrig((t) => t + 1)}
           className="h-11 w-11 rounded-xl bg-white shadow-lg border border-zinc-300 flex items-center justify-center"><Crosshair size={20} /></button>
+        <VoiceCaddie getAnswer={voiceAnswer} />
       </div>
 
       {/* GPS denied helper */}
