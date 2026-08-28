@@ -31,6 +31,9 @@ export default function Rangefinder() {
   const [mapType, setMapType] = useState("satellite");
   const [elev, setElev] = useState(null);
   const [wind, setWind] = useState(() => { try { return JSON.parse(localStorage.getItem("sg_wind")) || { speed: 0, dir: "none" }; } catch { return { speed: 0, dir: "none" }; } });
+  const [autoWx, setAutoWx] = useState(() => localStorage.getItem("sg_autowx") === "1");
+  const [wx, setWx] = useState(null);
+  const wxReqRef = useRef({ pos: null, time: 0 });
   const [bag, setBag] = useState(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [recenterTrig, setRecenterTrig] = useState(0);
@@ -72,6 +75,27 @@ export default function Rangefinder() {
     if (hole?.greenCenter) { setTarget(hole.greenCenter); setTargetLabel("CENTER"); }
   }, [holeIdx, course]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Auto weather (throttled: refetch on >500m move or >10 min)
+  useEffect(() => {
+    if (!autoWx || !ball) return;
+    const r = wxReqRef.current;
+    if (r.pos && !movedMoreThan(r.pos, ball, 500) && Date.now() - r.time < 600000) return;
+    wxReqRef.current = { pos: ball, time: Date.now() };
+    api.get(`/weather?lat=${ball.lat}&lng=${ball.lng}`)
+      .then((res) => setWx(res.data))
+      .catch(() => setWx({ available: false }));
+  }, [autoWx, ball]);
+
+  // Effective wind: auto weather (relationship derived from shot bearing) or manual
+  const effWind = useMemo(() => {
+    if (autoWx && wx?.available && ball && target) {
+      const rel = ((wx.windFromDeg - bearingDeg(ball, target) + 540) % 360) - 180;
+      const dir = Math.abs(rel) <= 45 ? "head" : Math.abs(rel) >= 135 ? "tail" : rel > 0 ? "right" : "left";
+      return { speedKmh: wx.windSpeedKmh, dir, auto: true };
+    }
+    return { speedKmh: settings.windUnit === "mph" ? wind.speed * 1.609 : wind.speed, dir: wind.dir, auto: false };
+  }, [autoWx, wx, ball, target, wind, settings.windUnit]);
+
   const distM = useMemo(() => haversineMeters(ball, target), [ball, target]);
   const fcb = useMemo(() => {
     if (!ball || !hole) return null;
@@ -99,11 +123,12 @@ export default function Rangefinder() {
   const pl = useMemo(() => computePlaysLike({
     actualMeters: distM,
     elevDiffM: elev?.available ? elev.diff : 0,
-    windSpeedKmh: settings.windUnit === "mph" ? wind.speed * 1.609 : wind.speed,
-    windDir: wind.dir,
+    windSpeedKmh: effWind.speedKmh,
+    windDir: effWind.dir,
+    tempC: autoWx && wx?.available ? wx.tempC : null,
     toggles: settings,
     tournamentMode: settings.tournamentMode,
-  }), [distM, elev, wind, settings]);
+  }), [distM, elev, effWind, autoWx, wx, settings]);
 
   const rec = useMemo(() => (settings.tournamentMode ? null : recommendClub(pl?.playsLikeMeters, bag?.clubs)), [pl, bag, settings.tournamentMode]);
 
@@ -115,8 +140,9 @@ export default function Rangefinder() {
       actualDistanceYards: fmtDist(distM, "yd"),
       playsLikeYards: pl ? fmtDist(pl.playsLikeMeters, "yd") : null,
       elevationMeters: elev?.available ? elev.diff : null,
-      windSpeedKmh: wind.dir === "none" ? 0 : wind.speed,
-      windRelationship: wind.dir,
+      windSpeedKmh: effWind.dir === "none" ? 0 : Math.round(effWind.speedKmh),
+      windRelationship: effWind.dir,
+      temperatureC: autoWx && wx?.available ? wx.tempC : null,
       frontGreenYards: fcb?.front != null ? fmtDist(fcb.front, "yd") : null,
       centerGreenYards: fcb?.center != null ? fmtDist(fcb.center, "yd") : null,
       backGreenYards: fcb?.back != null ? fmtDist(fcb.back, "yd") : null,
@@ -125,7 +151,7 @@ export default function Rangefinder() {
       hazards: (hole?.hazards || []).map((h) => ({ name: h.name, type: h.type, frontYards: ball ? fmtDist(haversineMeters(ball, h), "yd") : null, carryYards: ball && h.carryLat ? fmtDist(haversineMeters(ball, { lat: h.carryLat, lng: h.carryLng }), "yd") : null })),
     };
     localStorage.setItem("sg_caddie_ctx", JSON.stringify(ctx));
-  }, [distM, pl, rec, elev, wind, fcb, hole, ball]);
+  }, [distM, pl, rec, elev, effWind, autoWx, wx, fcb, hole, ball]);
 
   const onMapClick = useCallback((p) => {
     if (camMode === "heading") { setCamMode("follow"); return; }
@@ -425,18 +451,38 @@ export default function Rangefinder() {
             {/* Wind */}
             {!settings.tournamentMode && (
               <div className="py-2 border-t border-zinc-100">
-                <p className="overline-label text-zinc-400 flex items-center gap-1"><Wind size={12} /> WIND ({settings.windUnit === "kmh" ? "km/h" : "mph"})</p>
-                <div className="flex items-center gap-2 mt-1.5">
-                  <input data-testid="wind-speed-input" type="number" min="0" value={wind.speed}
-                    onChange={(e) => { const w = { ...wind, speed: Number(e.target.value) }; setWind(w); localStorage.setItem("sg_wind", JSON.stringify(w)); }}
-                    className="w-16 h-10 rounded-lg border border-zinc-300 text-center font-bold" />
-                  <div className="flex gap-1 overflow-x-auto">
-                    {WIND_DIRS.map(([k, l]) => (
-                      <button key={k} data-testid={`wind-dir-${k}`} onClick={() => { const w = { ...wind, dir: k }; setWind(w); localStorage.setItem("sg_wind", JSON.stringify(w)); }}
-                        className={`shrink-0 px-2.5 h-10 rounded-lg text-[10px] font-extrabold ${wind.dir === k ? "bg-[#14532D] text-white" : "bg-zinc-100 text-zinc-600"}`}>{l}</button>
-                    ))}
-                  </div>
+                <div className="flex items-center justify-between">
+                  <p className="overline-label text-zinc-400 flex items-center gap-1"><Wind size={12} /> WIND ({settings.windUnit === "kmh" ? "km/h" : "mph"})</p>
+                  <button data-testid="auto-weather-toggle" onClick={() => { const v = !autoWx; setAutoWx(v); localStorage.setItem("sg_autowx", v ? "1" : "0"); if (v) { wxReqRef.current = { pos: null, time: 0 }; toast.success("Auto weather on — using live conditions at your location"); } }}
+                    className={`h-8 px-3 rounded-lg text-[10px] font-extrabold tracking-wider ${autoWx ? "bg-[#0EA5E9] text-white" : "bg-zinc-100 text-zinc-500"}`}>
+                    AUTO WEATHER {autoWx ? "ON" : "OFF"}
+                  </button>
                 </div>
+                {autoWx ? (
+                  <div className="mt-2 bg-sky-50 border border-sky-200 rounded-xl px-3 py-2" data-testid="live-weather-info">
+                    {wx?.available ? (
+                      <p className="text-xs font-bold text-sky-900">
+                        {Math.round(settings.windUnit === "mph" ? wx.windSpeedKmh / 1.609 : wx.windSpeedKmh)} {settings.windUnit === "kmh" ? "km/h" : "mph"} from {Math.round(wx.windFromDeg)}°
+                        {effWind.auto && <span className="uppercase text-sky-600"> · {effWind.dir === "head" ? "HEADWIND" : effWind.dir === "tail" ? "TAILWIND" : effWind.dir + " CROSS"}</span>}
+                        <span className="text-sky-600"> · {Math.round(wx.tempC)}°C · {wx.humidity}% RH</span>
+                      </p>
+                    ) : (
+                      <p className="text-xs font-bold text-sky-900">{wx ? "Live weather unavailable — switch to manual wind." : "Fetching live weather…"}</p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 mt-1.5">
+                    <input data-testid="wind-speed-input" type="number" min="0" value={wind.speed}
+                      onChange={(e) => { const w = { ...wind, speed: Number(e.target.value) }; setWind(w); localStorage.setItem("sg_wind", JSON.stringify(w)); }}
+                      className="w-16 h-10 rounded-lg border border-zinc-300 text-center font-bold" />
+                    <div className="flex gap-1 overflow-x-auto">
+                      {WIND_DIRS.map(([k, l]) => (
+                        <button key={k} data-testid={`wind-dir-${k}`} onClick={() => { const w = { ...wind, dir: k }; setWind(w); localStorage.setItem("sg_wind", JSON.stringify(w)); }}
+                          className={`shrink-0 px-2.5 h-10 rounded-lg text-[10px] font-extrabold ${wind.dir === k ? "bg-[#14532D] text-white" : "bg-zinc-100 text-zinc-600"}`}>{l}</button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
             {/* Plays-like breakdown */}

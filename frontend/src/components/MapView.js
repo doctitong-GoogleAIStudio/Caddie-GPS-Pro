@@ -53,7 +53,7 @@ export const MapView = ({
   center, zoom = 17, mapType = "satellite", onMapClick,
   ball, gpsPos, target, onTargetDrag, tee, greens, hazards = [],
   distLabel, recenterTrigger, extraMarkers = [],
-  rotation = 0, followPos = null, onUserPan, gpsHeading = null, gpsPath = [],
+  rotation = 0, followPos = null, onUserPan, gpsHeading = null, gpsPath = [], shotLines = [],
 }) => {
   const midpoint = useMemo(() => {
     if (!ball || !target) return null;
@@ -88,6 +88,15 @@ export const MapView = ({
       {gpsPath.length > 1 && (
         <Polyline positions={gpsPath.map((p) => [p.lat, p.lng])} pathOptions={{ color: "#0EA5E9", weight: 3, opacity: 0.55 }} />
       )}
+      {shotLines.map((s, i) => (
+        <Polyline key={`sl-${i}`} positions={[[s.start.lat, s.start.lng], [s.end.lat, s.end.lng]]}
+          pathOptions={{ color: "#D4AF37", weight: 3, opacity: 0.9 }} />
+      ))}
+      {shotLines.map((s, i) => s.label ? (
+        <Marker key={`slm-${i}`} interactive={false}
+          position={[(s.start.lat + s.end.lat) / 2, (s.start.lng + s.end.lng) / 2]}
+          icon={div(`<div class="mk-distlabel" style="background:#D4AF37;color:#0F0F10;border-color:#0F0F10">${s.label}</div>`, [90, 24], [45, 12])} />
+      ) : null)}
       {gpsPos && <Marker position={[gpsPos.lat, gpsPos.lng]} icon={gpsIcon(gpsHeading)} zIndexOffset={500} />}
       {ball && <Marker position={[ball.lat, ball.lng]} icon={ballIcon} />}
       {tee && <Marker position={[tee.lat, tee.lng]} icon={teeIcon} />}

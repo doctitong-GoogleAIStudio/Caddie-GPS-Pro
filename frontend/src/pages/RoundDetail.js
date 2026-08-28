@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useSettings } from "../context/SettingsContext";
 import { fmtDist, unitLabel } from "../lib/geo";
-import { ArrowLeft, Trash } from "@phosphor-icons/react";
+import { MapView } from "../components/MapView";
+import { ArrowLeft, Trash, Play, Stop } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 export default function RoundDetail() {
@@ -12,10 +13,13 @@ export default function RoundDetail() {
   const { settings } = useSettings();
   const [round, setRound] = useState(null);
   const [shots, setShots] = useState([]);
+  const [replayIdx, setReplayIdx] = useState(null);
+  const replayTimer = useRef(null);
 
   useEffect(() => {
     api.get(`/rounds/${id}`).then((r) => setRound(r.data)).catch(() => {});
     api.get(`/shots?roundId=${id}`).then((r) => setShots(r.data)).catch(() => {});
+    return () => clearInterval(replayTimer.current);
   }, [id]);
 
   if (!round) return <div className="min-h-screen flex items-center justify-center text-sm font-bold text-zinc-400">Loading…</div>;
@@ -32,6 +36,30 @@ export default function RoundDetail() {
     await api.delete(`/rounds/${id}`);
     toast.success("Round deleted");
     nav("/history");
+  };
+
+  const path = round.gpsPath || [];
+  const shotLines = shots.map((s) => ({
+    start: { lat: s.startLat, lng: s.startLng }, end: { lat: s.endLat, lng: s.endLng },
+    label: `${s.club} · ${fmtDist(s.distanceMeters, settings.distanceUnit)} ${unitLabel(settings.distanceUnit).toLowerCase()}`,
+  }));
+  const hasMap = path.length > 1 || shotLines.length > 0;
+  const mapCenter = path[0] || shotLines[0]?.start || null;
+  const replaying = replayIdx != null;
+
+  const toggleReplay = () => {
+    if (replaying) {
+      clearInterval(replayTimer.current);
+      setReplayIdx(null);
+      return;
+    }
+    let i = 0;
+    setReplayIdx(0);
+    replayTimer.current = setInterval(() => {
+      i += 1;
+      if (i >= path.length) { clearInterval(replayTimer.current); setReplayIdx(null); }
+      else setReplayIdx(i);
+    }, 80);
   };
 
   return (
@@ -53,6 +81,29 @@ export default function RoundDetail() {
           </div>
         ))}
       </div>
+
+      {hasMap && mapCenter && (
+        <div className="mx-4 mt-4 bg-white border border-zinc-200 rounded-2xl overflow-hidden" data-testid="path-replay-card">
+          <div className="relative h-72">
+            <MapView center={mapCenter} zoom={16}
+              gpsPath={path} shotLines={shotLines}
+              gpsPos={replaying ? path[replayIdx] : null}
+              followPos={replaying ? path[replayIdx] : null} />
+          </div>
+          <div className="p-3 flex items-center justify-between">
+            <div>
+              <p className="overline-label text-zinc-400">ROUND MAP</p>
+              <p className="text-[11px] font-bold text-zinc-500">{path.length > 1 ? `${path.length} GPS points` : ""}{path.length > 1 && shotLines.length ? " · " : ""}{shotLines.length ? `${shotLines.length} shots` : ""}</p>
+            </div>
+            {path.length > 1 && (
+              <button data-testid="replay-btn" onClick={toggleReplay}
+                className={`h-11 px-4 rounded-xl font-extrabold text-xs tracking-widest flex items-center gap-1.5 ${replaying ? "bg-red-500 text-white" : "bg-[#14532D] text-white"}`}>
+                {replaying ? <><Stop size={16} weight="fill" /> STOP</> : <><Play size={16} weight="fill" /> REPLAY ROUND</>}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="mx-4 mt-4 bg-white rounded-2xl border border-zinc-200 overflow-hidden">
         <table className="w-full text-xs">

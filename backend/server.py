@@ -1,4 +1,5 @@
 import os
+import time
 import uuid
 import math
 import json
@@ -405,12 +406,19 @@ async def fetch_elevations(points):
     if missing:
         lats = ",".join(str(k[0]) for k in missing)
         lngs = ",".join(str(k[1]) for k in missing)
-        async with httpx.AsyncClient(timeout=8) as hc:
-            r = await hc.get(f"https://api.open-meteo.com/v1/elevation?latitude={lats}&longitude={lngs}")
-            r.raise_for_status()
-            elevs = r.json()["elevation"]
-            for k, e in zip(missing, elevs):
-                _elev_cache[k] = e
+        try:
+            async with httpx.AsyncClient(timeout=8) as hc:
+                r = await hc.get(f"https://api.open-meteo.com/v1/elevation?latitude={lats}&longitude={lngs}")
+                r.raise_for_status()
+                elevs = r.json()["elevation"]
+        except Exception:
+            locs = "|".join(f"{k[0]},{k[1]}" for k in missing)
+            async with httpx.AsyncClient(timeout=10) as hc:
+                r = await hc.get(f"https://api.open-elevation.com/api/v1/lookup?locations={locs}")
+                r.raise_for_status()
+                elevs = [x["elevation"] for x in r.json()["results"]]
+        for k, e in zip(missing, elevs):
+            _elev_cache[k] = e
     return [_elev_cache[k] for k in keys]
 
 
@@ -422,6 +430,43 @@ async def elevation(lat1: float, lng1: float, lat2: float, lng2: float):
     except Exception as e:
         logger.warning(f"Elevation failed: {e}")
         return {"ball": None, "target": None, "diff": None, "available": False}
+
+
+# ---------- Weather (Open-Meteo, free, cached 10 min) ----------
+_weather_cache = {}
+
+
+@api.get("/weather")
+async def weather(lat: float, lng: float):
+    key = (round(lat, 2), round(lng, 2))
+    now = time.time()
+    c = _weather_cache.get(key)
+    if c and now - c[0] < 600:
+        return c[1]
+    try:
+        async with httpx.AsyncClient(timeout=8) as hc:
+            r = await hc.get(
+                f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lng}"
+                "&current=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m&wind_speed_unit=kmh"
+            )
+            r.raise_for_status()
+            cur = r.json()["current"]
+            out = {"available": True, "tempC": cur["temperature_2m"], "humidity": cur["relative_humidity_2m"],
+                   "windSpeedKmh": cur["wind_speed_10m"], "windFromDeg": cur["wind_direction_10m"]}
+    except Exception as e:
+        logger.warning(f"Open-Meteo weather failed, trying wttr.in: {e}")
+        try:
+            async with httpx.AsyncClient(timeout=10) as hc:
+                r = await hc.get(f"https://wttr.in/{lat},{lng}?format=j1", headers={"User-Agent": "curl/8"})
+                r.raise_for_status()
+                cur = r.json()["current_condition"][0]
+                out = {"available": True, "tempC": float(cur["temp_C"]), "humidity": float(cur["humidity"]),
+                       "windSpeedKmh": float(cur["windspeedKmph"]), "windFromDeg": float(cur["winddirDegree"])}
+        except Exception as e2:
+            logger.warning(f"Weather fallback failed: {e2}")
+            return {"available": False}
+    _weather_cache[key] = (now, out)
+    return out
 
 
 # ---------- AI Caddie ----------

@@ -71,6 +71,7 @@ export default function More() {
         <p className="overline-label text-zinc-400 pt-3 pl-1">PLAYS-LIKE ADJUSTMENTS (ESTIMATES)</p>
         <Toggle label="Elevation Adjustment" value={settings.elevationAdj} onChange={(v) => update({ elevationAdj: v })} testId="setting-elevation-adj" />
         <Toggle label="Wind Adjustment" value={settings.windAdj} onChange={(v) => update({ windAdj: v })} testId="setting-wind-adj" />
+        <Toggle label="Temperature Adjustment" desc="Applied when Auto Weather is on" value={settings.tempAdj} onChange={(v) => update({ tempAdj: v })} testId="setting-temp-adj" />
         <Toggle label="AI Caddie" value={settings.aiCaddie} onChange={(v) => update({ aiCaddie: v })} testId="setting-ai-caddie" />
 
         <p className="overline-label text-zinc-400 pt-3 pl-1">COMPETITION</p>
