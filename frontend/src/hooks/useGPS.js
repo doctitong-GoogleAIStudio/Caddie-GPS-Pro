@@ -18,7 +18,7 @@ export function useGPS(enabled = true) {
         setError(null);
         setAccuracy(p.coords.accuracy);
         const np = { lat: p.coords.latitude, lng: p.coords.longitude };
-        if (!lastRef.current || haversineMeters(lastRef.current, np) > 2) {
+        if (!lastRef.current || haversineMeters(lastRef.current, np) > 1) {
           lastRef.current = np;
           setPos(np);
         }

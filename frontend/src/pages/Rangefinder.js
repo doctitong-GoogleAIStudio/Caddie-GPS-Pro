@@ -217,9 +217,14 @@ export default function Rangefinder() {
 
       {/* Big distance card */}
       <div className="absolute top-[64px] left-3 z-[1050] bg-white rounded-2xl shadow-xl border border-zinc-300 px-4 py-2.5 min-w-[128px]" data-testid="distance-card">
-        <p className="overline-label text-zinc-500">{targetLabel} · ACTUAL</p>
+        <div className="flex items-center justify-between gap-2">
+          <p className="overline-label text-zinc-500">{targetLabel} · ACTUAL</p>
+        </div>
         <p className="font-num text-5xl leading-none mt-0.5" data-testid="target-distance-value">{fmtDist(distM, unit)}</p>
         <p className="overline-label text-[#14532D]">{unitLabel(unit)}</p>
+        <p className={`text-[9px] font-extrabold tracking-widest mt-1 flex items-center gap-1 ${ballSource === "gps" && gpsPos ? "text-[#22C55E]" : "text-zinc-400"}`} data-testid="ball-source-label">
+          {ballSource === "gps" && gpsPos ? (<><span className="w-1.5 h-1.5 rounded-full bg-[#22C55E] animate-pulse" /> BALL: GPS LIVE</>) : "BALL: MANUAL"}
+        </p>
         {!settings.tournamentMode && pl && distM != null && (
           <div className="mt-1.5 pt-1.5 border-t border-zinc-200">
             <p className="overline-label text-zinc-400">PLAYS LIKE*</p>
@@ -338,8 +343,18 @@ export default function Rangefinder() {
             className={`flex-1 h-12 rounded-xl text-[11px] font-extrabold tracking-wider ${setBallMode ? "bg-[#D4AF37] text-[#0F0F10]" : "bg-white/10 text-white"}`}>
             SET BALL ON MAP
           </button>
-          <button data-testid="use-my-location-btn" onClick={() => { if (gpsPos) { setBall(gpsPos); setBallSource("gps"); setRecenterTrig((t) => t + 1); toast.success("Using live GPS position"); } else toast.error("GPS not available"); }}
-            className="h-12 px-3 rounded-xl bg-white/10 text-white flex items-center justify-center"><GpsFix size={20} /></button>
+          <button data-testid="use-my-location-btn"
+            onClick={() => {
+              if (ballSource === "gps") return;
+              if (gpsPos) {
+                setBall(gpsPos); setBallSource("gps"); setRecenterTrig((t) => t + 1);
+                toast.success("LIVE mode: place your phone on the ball — distance updates in real time");
+              } else toast.error("GPS not available");
+            }}
+            className={`h-12 px-3 rounded-xl flex items-center justify-center gap-1.5 ${ballSource === "gps" && gpsPos ? "bg-[#22C55E] text-[#0F0F10]" : "bg-white/10 text-white"}`}>
+            <GpsFix size={20} weight={ballSource === "gps" && gpsPos ? "fill" : "regular"} />
+            <span className="text-[10px] font-extrabold tracking-wider">{ballSource === "gps" && gpsPos ? "LIVE" : "GPS"}</span>
+          </button>
           {shot ? (
             <button data-testid="end-shot-btn" onClick={endShot} className="flex-1 h-12 rounded-xl bg-[#D4AF37] text-[#0F0F10] text-[11px] font-extrabold tracking-wider animate-pulse">
               BALL FOUND · END SHOT
