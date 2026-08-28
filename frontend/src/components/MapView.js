@@ -10,8 +10,11 @@ const TILES = {
 
 const div = (html, size, anchor) => L.divIcon({ html, className: "", iconSize: size, iconAnchor: anchor });
 
-const ballIcon = div('<div class="mk-ball"></div>', [18, 18], [9, 9]);
-const gpsIcon = div('<div class="mk-gps"></div>', [16, 16], [8, 8]);
+const ballIcon = div('<div class="mk-ball mk-upright"></div>', [18, 18], [9, 9]);
+const gpsIcon = (heading) => L.divIcon({
+  html: `<div class="mk-gps-wrap">${heading != null ? `<svg width="44" height="44" viewBox="0 0 44 44" style="position:absolute;inset:0;transform:rotate(${heading}deg)"><path d="M22 3 L30 17 L14 17 Z" fill="rgba(14,165,233,0.95)" stroke="white" stroke-width="1.5"/></svg>` : ""}<div class="mk-gps"></div></div>`,
+  className: "gps-marker-anim", iconSize: [44, 44], iconAnchor: [22, 22],
+});
 const flagIcon = div('<div class="mk-flag"><svg width="30" height="34" viewBox="0 0 30 34"><line x1="6" y1="2" x2="6" y2="32" stroke="#fff" stroke-width="2.5"/><path d="M6 3 L26 8 L6 14 Z" fill="#EF4444"/><circle cx="6" cy="32" r="3" fill="#fff"/></svg></div>', [30, 34], [6, 32]);
 const teeIcon = div('<div class="mk-tee">T</div>', [22, 22], [11, 11]);
 const greenIcon = (label) => div(`<div class="mk-green">${label}</div>`, [20, 20], [10, 10]);
@@ -21,10 +24,19 @@ const hazardIcon = (type) => {
   return div(`<div class="mk-hazard" style="background:${colors[type] || "#fff"}">${letter}</div>`, [22, 22], [11, 11]);
 };
 
-function ClickHandler({ onMapClick }) {
+function ClickHandler({ onMapClick, onUserPan }) {
   useMapEvents({
     click(e) { onMapClick && onMapClick({ lat: e.latlng.lat, lng: e.latlng.lng }); },
+    dragstart() { onUserPan && onUserPan(); },
   });
+  return null;
+}
+
+function FollowCam({ pos }) {
+  const map = useMap();
+  useEffect(() => {
+    if (pos) map.panTo([pos.lat, pos.lng], { animate: true, duration: 0.9, easeLinearity: 0.4 });
+  }, [pos, map]);
   return null;
 }
 
@@ -41,6 +53,7 @@ export const MapView = ({
   center, zoom = 17, mapType = "satellite", onMapClick,
   ball, gpsPos, target, onTargetDrag, tee, greens, hazards = [],
   distLabel, recenterTrigger, extraMarkers = [],
+  rotation = 0, followPos = null, onUserPan, gpsHeading = null, gpsPath = [],
 }) => {
   const midpoint = useMemo(() => {
     if (!ball || !target) return null;
@@ -50,18 +63,32 @@ export const MapView = ({
   const tile = TILES[mapType === "map" ? "map" : "satellite"];
 
   return (
-    <MapContainer
-      center={[center.lat, center.lng]} zoom={zoom} zoomControl={false}
-      style={{ width: "100%", height: "100%", background: "#0a1f12" }}
-      attributionControl={false}
-    >
+    <div className="absolute overflow-hidden" style={{ inset: 0 }}>
+      <div
+        className="absolute"
+        style={{
+          inset: "-24%",
+          transform: `rotate(${-rotation}deg)`,
+          transition: "transform 0.6s ease",
+          "--map-rot": `${rotation}deg`,
+        }}
+      >
+        <MapContainer
+          center={[center.lat, center.lng]} zoom={zoom} zoomControl={false}
+          style={{ width: "100%", height: "100%", background: "#0a1f12" }}
+          attributionControl={false}
+        >
       <TileLayer url={tile.url} maxZoom={19} />
       {mapType === "hybrid" && (
         <TileLayer url="https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}" maxZoom={19} />
       )}
-      <ClickHandler onMapClick={onMapClick} />
+      <ClickHandler onMapClick={onMapClick} onUserPan={onUserPan} />
+      <FollowCam pos={followPos} />
       <Recenter center={center} trigger={recenterTrigger} />
-      {gpsPos && <Marker position={[gpsPos.lat, gpsPos.lng]} icon={gpsIcon} />}
+      {gpsPath.length > 1 && (
+        <Polyline positions={gpsPath.map((p) => [p.lat, p.lng])} pathOptions={{ color: "#0EA5E9", weight: 3, opacity: 0.55 }} />
+      )}
+      {gpsPos && <Marker position={[gpsPos.lat, gpsPos.lng]} icon={gpsIcon(gpsHeading)} zIndexOffset={500} />}
       {ball && <Marker position={[ball.lat, ball.lng]} icon={ballIcon} />}
       {tee && <Marker position={[tee.lat, tee.lng]} icon={teeIcon} />}
       {greens?.greenFront && <Marker position={[greens.greenFront.lat, greens.greenFront.lng]} icon={greenIcon("F")} />}
@@ -94,5 +121,7 @@ export const MapView = ({
         </>
       )}
     </MapContainer>
+      </div>
+    </div>
   );
 };

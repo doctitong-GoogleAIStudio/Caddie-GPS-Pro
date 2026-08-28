@@ -64,6 +64,17 @@ body {
 
 .leaflet-container { font-family: inherit; }
 
+/* smooth golfer marker movement (navigation style) */
+.gps-marker-anim { transition: transform 0.9s linear; }
+.leaflet-zoom-anim .gps-marker-anim { transition: none; }
+.mk-gps-wrap { position: relative; width: 44px; height: 44px; }
+.mk-gps-wrap .mk-gps { position: absolute; left: 14px; top: 14px; }
+
+/* keep labels upright when map is rotated (Direction Up mode) */
+.mk-distlabel, .mk-green, .mk-tee, .mk-hazard, .mk-ball {
+    transform: rotate(var(--map-rot, 0deg));
+}
+
 @layer base {
     :root {
         --background: 0 0% 99%;

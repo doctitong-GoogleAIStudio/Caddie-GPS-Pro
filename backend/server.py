@@ -120,6 +120,7 @@ class Settings(BaseModel):
     tempAdj: bool = False
     aiCaddie: bool = True
     tournamentMode: bool = False
+    gpsTracking: bool = True
 
 
 class HoleScore(BaseModel):
@@ -143,6 +144,7 @@ class Round(BaseModel):
     status: str = "active"
     currentHole: int = 1
     scores: List[HoleScore] = []
+    gpsPath: List[dict] = []
     startedAt: str = Field(default_factory=now_iso)
     endedAt: Optional[str] = None
 
@@ -295,6 +297,14 @@ async def update_round(round_id: str, upd: RoundUpdate):
     if res.matched_count == 0:
         raise HTTPException(404, "Round not found")
     return await db.rounds.find_one({"id": round_id}, {"_id": 0})
+
+
+@api.post("/rounds/{round_id}/track")
+async def track_round(round_id: str, body: dict):
+    points = body.get("points", [])
+    if points:
+        await db.rounds.update_one({"id": round_id}, {"$push": {"gpsPath": {"$each": points[:200]}}})
+    return {"ok": True}
 
 
 @api.delete("/rounds/{round_id}")

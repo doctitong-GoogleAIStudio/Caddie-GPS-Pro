@@ -6,7 +6,7 @@ const Ctx = createContext(null);
 const DEFAULTS = {
   distanceUnit: "yd", windUnit: "kmh", tempUnit: "C",
   elevationAdj: true, windAdj: true, tempAdj: false,
-  aiCaddie: true, tournamentMode: false,
+  aiCaddie: true, tournamentMode: false, gpsTracking: true,
 };
 
 export function SettingsProvider({ children }) {

@@ -65,6 +65,9 @@ export default function More() {
         <Segment label="Distance" options={[["yd", "YARDS"], ["m", "METERS"]]} value={settings.distanceUnit} onChange={(v) => update({ distanceUnit: v })} testId="setting-unit" />
         <Segment label="Wind" options={[["kmh", "KM/H"], ["mph", "MPH"]]} value={settings.windUnit} onChange={(v) => update({ windUnit: v })} testId="setting-wind-unit" />
 
+        <p className="overline-label text-zinc-400 pt-3 pl-1">GPS</p>
+        <Toggle label="GPS Tracking" desc="Live position, navigation & path recording. Disable when not playing." value={settings.gpsTracking !== false} onChange={(v) => update({ gpsTracking: v })} testId="setting-gps-tracking" />
+
         <p className="overline-label text-zinc-400 pt-3 pl-1">PLAYS-LIKE ADJUSTMENTS (ESTIMATES)</p>
         <Toggle label="Elevation Adjustment" value={settings.elevationAdj} onChange={(v) => update({ elevationAdj: v })} testId="setting-elevation-adj" />
         <Toggle label="Wind Adjustment" value={settings.windAdj} onChange={(v) => update({ windAdj: v })} testId="setting-wind-adj" />

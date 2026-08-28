@@ -8,7 +8,7 @@ import { haversineMeters, bearingDeg, fmtDist, unitLabel, movedMoreThan } from "
 import { computePlaysLike } from "../lib/playsLike";
 import { recommendClub } from "../lib/clubRec";
 import { api, cachedGet, getActiveRound, setActiveRound } from "../lib/api";
-import { House, CaretLeft, CaretRight, Crosshair, GpsFix, Stack, CaretUp, CaretDown, Wind, PersonSimpleWalk, X } from "@phosphor-icons/react";
+import { House, CaretLeft, CaretRight, Crosshair, GpsFix, Stack, CaretUp, CaretDown, Wind, PersonSimpleWalk, X, Compass, NavigationArrow } from "@phosphor-icons/react";
 import { VoiceCaddie } from "../components/VoiceCaddie";
 
 const DEFAULT_CENTER = { lat: 7.052, lng: 125.517 };
@@ -18,7 +18,7 @@ export default function Rangefinder() {
   const nav = useNavigate();
   const { settings } = useSettings();
   const unit = settings.distanceUnit;
-  const { pos: gpsPos, accuracy, quality, error: gpsError } = useGPS(true);
+  const { pos: gpsPos, accuracy, quality, error: gpsError, speed, heading } = useGPS(settings.gpsTracking !== false);
 
   const activeRound = getActiveRound();
   const [course, setCourse] = useState(null);
@@ -39,6 +39,9 @@ export default function Rangefinder() {
   const [showClubPick, setShowClubPick] = useState(false);
   const [walkAnchor, setWalkAnchor] = useState(null);
   const [holeSuggestion, setHoleSuggestion] = useState(null);
+  const [camMode, setCamMode] = useState("free"); // free | follow (north up) | heading (direction up)
+  const pathBufRef = useRef([]);
+  const [gpsPath, setGpsPath] = useState([]);
   const dismissedHoleRef = useRef(null);
   const elevReqRef = useRef({ ball: null, target: null });
   const devMode = localStorage.getItem("sg_dev") === "1";
@@ -125,6 +128,7 @@ export default function Rangefinder() {
   }, [distM, pl, rec, elev, wind, fcb, hole, ball]);
 
   const onMapClick = useCallback((p) => {
+    if (camMode === "heading") { setCamMode("follow"); return; }
     if (setBallMode) {
       setBall({ lat: p.lat, lng: p.lng });
       setBallSource("manual");
@@ -134,7 +138,7 @@ export default function Rangefinder() {
       setTarget({ lat: p.lat, lng: p.lng });
       setTargetLabel(p.hazard ? p.hazard.name.toUpperCase() : "CUSTOM");
     }
-  }, [setBallMode]);
+  }, [setBallMode, camMode]);
 
   const changeHole = (delta) => {
     if (!course) return;
@@ -166,6 +170,33 @@ export default function Rangefinder() {
   }, [gpsPos, course, holeIdx]);
 
   const walkDistM = useMemo(() => (walkAnchor && gpsPos ? haversineMeters(walkAnchor, gpsPos) : null), [walkAnchor, gpsPos]);
+
+  // GPS path recording during active rounds (flushed in batches)
+  useEffect(() => {
+    if (!gpsPos || !activeRound || settings.gpsTracking === false) return;
+    const pt = { lat: gpsPos.lat, lng: gpsPos.lng, t: Date.now() };
+    pathBufRef.current.push(pt);
+    setGpsPath((p) => (p.length > 500 ? [...p.slice(-400), pt] : [...p, pt]));
+    if (pathBufRef.current.length >= 10) {
+      const points = pathBufRef.current.splice(0);
+      api.post(`/rounds/${activeRound.id}/track`, { points }).catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gpsPos]);
+  useEffect(() => () => {
+    if (pathBufRef.current.length && activeRound) {
+      api.post(`/rounds/${activeRound.id}/track`, { points: pathBufRef.current.splice(0) }).catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const cycleCam = () => {
+    setCamMode((m) => {
+      const next = m === "free" ? "follow" : m === "follow" ? "heading" : "free";
+      toast.message(next === "follow" ? "Follow mode · North Up" : next === "heading" ? "Follow mode · Direction Up" : "Free camera");
+      return next;
+    });
+  };
 
   const voiceAnswer = (q) => {
     const ql = (q || "").toLowerCase();
@@ -210,6 +241,8 @@ export default function Rangefinder() {
       });
       toast.success(`Shot recorded: ${s.club} · ${fmtDist(s.distance, unit)} ${unitLabel(unit)}`);
       setWalkAnchor(s.end);
+      setBall(s.end);
+      setBallSource("gps");
     } catch { toast.error("Could not save shot (offline?)"); }
     setShotResult(null);
   };
@@ -230,6 +263,11 @@ export default function Rangefinder() {
           tee={hole?.tee} greens={hole} hazards={hole?.hazards || []}
           distLabel={distM != null ? `${fmtDist(distM, unit)} ${unitLabel(unit).toLowerCase()}` : null}
           recenterTrigger={recenterTrig}
+          rotation={camMode === "heading" && heading != null ? heading : 0}
+          followPos={camMode !== "free" ? gpsPos : null}
+          onUserPan={() => setCamMode("free")}
+          gpsHeading={heading}
+          gpsPath={activeRound ? gpsPath : []}
         />
       </div>
 
@@ -255,6 +293,17 @@ export default function Rangefinder() {
             {gpsError === "denied" ? "GPS DENIED" : gpsError ? "NO GPS" : accuracy != null ? `GPS ±${accuracy.toFixed(0)}m ${quality}` : "GPS…"}
           </div>
           {settings.tournamentMode && <div className="px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-[#0F0F10] text-[#D4AF37] border border-[#D4AF37]" data-testid="tournament-badge">TOURNAMENT</div>}
+          {settings.gpsTracking !== false && gpsPos && (speed != null || heading != null) && (
+            <div className="px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-[#0F0F10]/85 text-white shadow-lg flex items-center gap-1.5" data-testid="nav-hud">
+              {speed != null && <span>{(speed * 3.6).toFixed(1)} km/h</span>}
+              {heading != null && (
+                <span className="flex items-center gap-0.5">
+                  <NavigationArrow size={11} weight="fill" style={{ transform: `rotate(${heading + 45}deg)` }} className="text-[#0EA5E9]" />
+                  {["N", "NE", "E", "SE", "S", "SW", "W", "NW"][Math.round(heading / 45) % 8]} {Math.round(heading)}°
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -306,6 +355,10 @@ export default function Rangefinder() {
           className="h-11 w-11 rounded-xl bg-white shadow-lg border border-zinc-300 flex items-center justify-center"><Stack size={20} /></button>
         <button data-testid="recenter-btn" onClick={() => setRecenterTrig((t) => t + 1)}
           className="h-11 w-11 rounded-xl bg-white shadow-lg border border-zinc-300 flex items-center justify-center"><Crosshair size={20} /></button>
+        <button data-testid="cam-mode-btn" onClick={cycleCam}
+          className={`h-11 w-11 rounded-xl shadow-lg border flex items-center justify-center ${camMode === "free" ? "bg-white border-zinc-300" : "bg-[#0EA5E9] border-[#0EA5E9] text-white"}`}>
+          {camMode === "heading" ? <NavigationArrow size={20} weight="fill" /> : <Compass size={20} weight={camMode === "follow" ? "fill" : "regular"} />}
+        </button>
         <VoiceCaddie getAnswer={voiceAnswer} />
       </div>
 
@@ -328,6 +381,16 @@ export default function Rangefinder() {
 
       {/* Bottom panel */}
       <div className="absolute bottom-[64px] left-0 right-0 z-[1050]">
+        {fcb && fcb.center != null && (
+          <div className="flex justify-center gap-1.5 pb-1.5 px-3" data-testid="fcb-strip">
+            {[["FRONT", fcb.front], ["CENTER", fcb.center], ["BACK", fcb.back]].map(([l, v]) => (
+              <div key={l} className="bg-[#0F0F10]/85 backdrop-blur rounded-xl px-3 py-1 text-center shadow-lg">
+                <p className="text-[8px] font-extrabold tracking-widest text-white/50">{l}</p>
+                <p className="font-num text-lg leading-none text-white" data-testid={`fcb-${l.toLowerCase()}`}>{fmtDist(v, unit)}</p>
+              </div>
+            ))}
+          </div>
+        )}
         {sheetOpen && (
           <div className="bg-white rounded-t-3xl border-t-2 border-[#D4AF37] shadow-2xl px-4 pt-3 pb-2 max-h-[46vh] overflow-y-auto" data-testid="bottom-sheet">
             {/* Target cards */}
